@@ -7,20 +7,88 @@ from sqlalchemy.exc import IntegrityError
 from config import app, db, api
 from models import User, Recipe, UserSchema, RecipeSchema
 
+user_schema = UserSchema()
+recipes_schema = RecipeSchema(many=True)
+recipe_schema = RecipeSchema()
+
+
 class Signup(Resource):
-    pass
+    def post(self):
+        data = request.get_json()
+        try:
+            user = User(
+                username=data.get('username'),
+                image_url=data.get('image_url'),
+                bio=data.get('bio')
+            )
+            user.password_hash = data.get('password')
+            db.session.add(user)
+            db.session.commit()
+            session['user_id'] = user.id
+            return user_schema.dump(user), 201
+        except IntegrityError:
+            db.session.rollback()
+            return {'error': 'Username already taken or invalid.'}, 422
+        except ValueError as e:
+            db.session.rollback()
+            return {'error': str(e)}, 422
+
 
 class CheckSession(Resource):
-    pass
+    def get(self):
+        user_id = session.get('user_id')
+        if not user_id:
+            return {'error': 'Unauthorized'}, 401
+        user = User.query.get(user_id)
+        if not user:
+            return {'error': 'Unauthorized'}, 401
+        return user_schema.dump(user), 200
+
 
 class Login(Resource):
-    pass
+    def post(self):
+        data = request.get_json()
+        user = User.query.filter_by(username=data.get('username')).first()
+        if user and user.authenticate(data.get('password')):
+            session['user_id'] = user.id
+            return user_schema.dump(user), 200
+        return {'error': 'Invalid username or password.'}, 401
+
 
 class Logout(Resource):
-    pass
+    def delete(self):
+        if not session.get('user_id'):
+            return {'error': 'Unauthorized'}, 401
+        session.pop('user_id', None)
+        return {}, 204
+
 
 class RecipeIndex(Resource):
-    pass
+    def get(self):
+        if not session.get('user_id'):
+            return {'error': 'Unauthorized'}, 401
+        recipes = Recipe.query.all()
+        return recipes_schema.dump(recipes), 200
+
+    def post(self):
+        user_id = session.get('user_id')
+        if not user_id:
+            return {'error': 'Unauthorized'}, 401
+        data = request.get_json()
+        try:
+            recipe = Recipe(
+                title=data.get('title'),
+                instructions=data.get('instructions'),
+                minutes_to_complete=data.get('minutes_to_complete'),
+                user_id=user_id
+            )
+            db.session.add(recipe)
+            db.session.commit()
+            return recipe_schema.dump(recipe), 201
+        except ValueError as e:
+            db.session.rollback()
+            return {'error': str(e)}, 422
+
 
 api.add_resource(Signup, '/signup', endpoint='signup')
 api.add_resource(CheckSession, '/check_session', endpoint='check_session')
